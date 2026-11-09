@@ -1,13 +1,15 @@
 import logging
 import random
 import math
+import csv
+import io
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Optional, List, Dict, Any
 
 from fastapi import FastAPI, Depends, HTTPException, Query, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy import func, or_, text
 from sqlalchemy.orm import Session
 
@@ -260,7 +262,15 @@ def create_grievance(payload: GrievanceCreate, db: Session = Depends(get_db)):
     )
 
     db.add(new_grv)
-    db.flush()
+    try:
+        db.flush()
+    except Exception as integrity_err:
+        db.rollback()
+        # Retry with a fresh tracking ID on collision
+        tracking_id = generate_unique_tracking_id(db)
+        new_grv.tracking_id = tracking_id
+        db.add(new_grv)
+        db.flush()
 
     # Create initial audit history row
     initial_update = GrievanceUpdate(
@@ -435,16 +445,9 @@ def update_grievance_status(
     db.add(update_row)
     db.commit()
 
-    # Synchronize Db2 kernel trigger audit trail with officer operational notes
-    trigger_row = db.query(GrievanceUpdate).filter(
-        GrievanceUpdate.grievance_id == grv.id,
-        GrievanceUpdate.updated_by == "Db2 Engine (TRG_AUDIT_STATUS_CHANGE)",
-        GrievanceUpdate.new_status == new_status
-    ).order_by(GrievanceUpdate.id.desc()).first()
-
-    if trigger_row and history_note and "Officer Directive:" not in (trigger_row.notes or ""):
-        trigger_row.notes = f"{trigger_row.notes} | Officer Directive: {history_note}"
-        db.commit()
+    # Note: TRG_AUDIT_STATUS_CHANGE kernel trigger logs the transition atomically in Db2.
+    # The application-layer audit row above already captures officer notes.
+    # No additional trigger sync needed — the Db2 kernel trigger is the source of truth.
 
     db.expire_all()
     db.refresh(grv)
@@ -506,6 +509,98 @@ def get_grievance_stats(db: Session = Depends(get_db)):
         "pending_count": pending_count,
         "resolution_rate": rate
     }
+
+
+# ==============================================================================
+# Feature: IBM Db2 System Catalog Inspector (SYSCAT)
+# ==============================================================================
+
+@app.get(
+    f"{settings.API_PREFIX}/db2/catalog",
+    tags=["IBM Db2 Native Capabilities"]
+)
+def get_db2_catalog_info(db: Session = Depends(get_db)):
+    """
+    Queries IBM Db2 System Catalog (SYSCAT) to expose live schema metadata.
+    Demonstrates deep Db2 integration via SYSCAT.TABLES, SYSCAT.INDEXES, and SYSCAT.TRIGGERS.
+    """
+    try:
+        # 1. Table statistics from SYSCAT.TABLES
+        tables_query = text(
+            "SELECT TABNAME, CARD, NPAGES, FPAGES "
+            "FROM SYSCAT.TABLES "
+            "WHERE TABSCHEMA = CURRENT SCHEMA "
+            "ORDER BY TABNAME"
+        )
+        tables_res = db.execute(tables_query).fetchall()
+        tables_info = [
+            {
+                "table_name": r[0],
+                "row_count_estimate": int(r[1]) if r[1] is not None and r[1] >= 0 else "stats_pending",
+                "data_pages": int(r[2]) if r[2] is not None and r[2] >= 0 else 0,
+                "free_pages": int(r[3]) if r[3] is not None and r[3] >= 0 else 0
+            }
+            for r in tables_res
+        ]
+
+        # 2. Index count per table from SYSCAT.INDEXES
+        idx_query = text(
+            "SELECT TABNAME, COUNT(*) AS index_count "
+            "FROM SYSCAT.INDEXES "
+            "WHERE TABSCHEMA = CURRENT SCHEMA "
+            "GROUP BY TABNAME "
+            "ORDER BY TABNAME"
+        )
+        idx_res = db.execute(idx_query).fetchall()
+        index_info = {r[0]: int(r[1]) for r in idx_res}
+
+        # 3. Active Db2 Triggers from SYSCAT.TRIGGERS
+        triggers_query = text(
+            "SELECT TRIGNAME, TABNAME, TRIGEVENT, TRIGTIME "
+            "FROM SYSCAT.TRIGGERS "
+            "WHERE TABSCHEMA = CURRENT SCHEMA "
+            "FETCH FIRST 20 ROWS ONLY"
+        )
+        triggers_res = db.execute(triggers_query).fetchall()
+        triggers_info = [
+            {
+                "trigger_name": r[0],
+                "table_name": r[1],
+                "event": r[2],
+                "timing": r[3]
+            }
+            for r in triggers_res
+        ]
+
+        # 4. Active Stored Procedures from SYSCAT.ROUTINES
+        procs_query = text(
+            "SELECT ROUTINENAME, ROUTINETYPE "
+            "FROM SYSCAT.ROUTINES "
+            "WHERE ROUTINESCHEMA = CURRENT SCHEMA "
+            "FETCH FIRST 10 ROWS ONLY"
+        )
+        procs_res = db.execute(procs_query).fetchall()
+        procs_info = [{"procedure_name": r[0], "type": r[1]} for r in procs_res]
+
+        # Enrich tables with index count
+        for t in tables_info:
+            t["index_count"] = index_info.get(t["table_name"], 0)
+
+        return {
+            "database": settings.DB2_DATABASE,
+            "schema": "CURRENT SCHEMA",
+            "tables": tables_info,
+            "triggers": triggers_info,
+            "stored_procedures": procs_info,
+            "catalog_source": "SYSCAT.TABLES / SYSCAT.INDEXES / SYSCAT.TRIGGERS / SYSCAT.ROUTINES"
+        }
+
+    except Exception as e:
+        logger.error(f"Error querying IBM Db2 SYSCAT: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"SYSCAT query error: {str(e)}"
+        )
 
 
 # ==============================================================================
@@ -593,39 +688,73 @@ def ask_grievance_data(payload: AskQuestionRequest, db: Session = Depends(get_db
 )
 def run_db2_escalate_stored_procedure(db: Session = Depends(get_db)):
     """
-    Executes native IBM Db2 Stored Procedure: SP_ESCALATE_OVERDUE.
+    Executes native IBM Db2 Stored Procedure: SP_ESCALATE_OVERDUE (with SQL fallback).
     Evaluates continuous date arithmetic on Db2 engine: (DAYS(CURRENT DATE) - DAYS(DATE(created_at))) > 15
     Automatically elevates lingering complaints to Critical and returns total escalated count.
     """
     try:
-        raw_conn = db.connection().connection
-        cursor = raw_conn.cursor()
-        # Call Db2 native stored procedure with OUT parameter
-        cursor.callproc('SP_ESCALATE_OVERDUE', [0])
-        escalated_count = cursor.fetch_assoc().get('ESCALATED_COUNT', 0) if hasattr(cursor, 'fetch_assoc') else 0
+        # Count total overdue (open and not yet Critical)
+        pre_count = db.execute(text(
+            "SELECT COUNT(*) FROM grievances "
+            "WHERE status != 'Resolved' "
+            "AND priority != 'Critical' "
+            "AND (DAYS(CURRENT DATE) - DAYS(DATE(created_at))) > 15"
+        )).scalar() or 0
+
+        # Count total currently breaching SLA (regardless of priority)
+        total_sla_breach = db.execute(text(
+            "SELECT COUNT(*) FROM grievances "
+            "WHERE status != 'Resolved' "
+            "AND (DAYS(CURRENT DATE) - DAYS(DATE(created_at))) > 15"
+        )).scalar() or 0
+
+        # Try native IBM Db2 Stored Procedure first
+        escalated_count = 0
+        method_used = "sql_fallback"
+        try:
+            raw_conn = db.connection().connection
+            cursor = raw_conn.cursor()
+            result_params = cursor.callproc('SP_ESCALATE_OVERDUE', [0])
+            # IBM Db2 ibm_db driver returns OUT params in result_params list
+            if result_params and len(result_params) > 0:
+                escalated_count = int(result_params[0]) if result_params[0] is not None else pre_count
+            else:
+                escalated_count = pre_count
+            cursor.close()
+            method_used = "native_stored_procedure"
+            logger.info(f"SP_ESCALATE_OVERDUE executed via native callproc. Escalated: {escalated_count}")
+        except Exception as sp_err:
+            logger.info(f"SP callproc not available ({sp_err}), using direct IBM Db2 SQL escalation.")
+            # Direct IBM Db2 date arithmetic UPDATE — semantically identical to SP
+            db.execute(text(
+                "UPDATE grievances SET priority = 'Critical' "
+                "WHERE status != 'Resolved' "
+                "AND priority != 'Critical' "
+                "AND (DAYS(CURRENT DATE) - DAYS(DATE(created_at))) > 15"
+            ))
+            escalated_count = pre_count
+            method_used = "db2_sql_date_arithmetic"
+
         db.commit()
 
         return {
             "success": True,
             "procedure": "SP_ESCALATE_OVERDUE",
             "escalated_count": escalated_count,
-            "message": f"Successfully executed native IBM Db2 Stored Procedure SP_ESCALATE_OVERDUE. Checked and prioritized overdue dockets."
+            "total_sla_breach_count": int(total_sla_breach),
+            "execution_method": method_used,
+            "db2_query_used": "DAYS(CURRENT DATE) - DAYS(DATE(created_at)) > 15",
+            "message": (
+                f"IBM Db2 SP_ESCALATE_OVERDUE: Elevated {escalated_count} overdue docket(s) to Critical priority. "
+                f"Total SLA breaches (open >15 days): {total_sla_breach}. Method: {method_used}."
+            )
         }
-    except Exception as e:
-        logger.warning(f"Fallback direct SQL for stored procedure call: {e}")
-        try:
-            # Fallback direct SQL execution if driver callproc is unsupported
-            count_res = db.execute(text("SELECT COUNT(*) FROM grievances WHERE status != 'Resolved' AND (DAYS(CURRENT DATE) - DAYS(DATE(created_at))) > 15")).scalar() or 0
-            db.execute(text("UPDATE grievances SET priority = 'Critical' WHERE status != 'Resolved' AND (DAYS(CURRENT DATE) - DAYS(DATE(created_at))) > 15 AND priority != 'Critical'"))
-            db.commit()
-            return {
-                "success": True,
-                "procedure": "SP_ESCALATE_OVERDUE",
-                "escalated_count": count_res,
-                "message": f"Evaluated IBM Db2 date arithmetic for overdue dockets ({count_res} cases audited)."
-            }
-        except Exception as inner_err:
-            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to execute Db2 procedure: {str(inner_err)}")
+
+    except Exception as err:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to execute IBM Db2 escalation: {str(err)}"
+        )
 
 
 # ==============================================================================
@@ -1052,16 +1181,8 @@ def resolve_officer_docket(payload: ResolveDocketRequest, db: Session = Depends(
     db.add(update_row)
     db.commit()
 
-    # Synchronize Db2 kernel trigger audit trail with officer resolution ATR
-    trigger_row = db.query(GrievanceUpdate).filter(
-        GrievanceUpdate.grievance_id == grv.id,
-        GrievanceUpdate.updated_by == "Db2 Engine (TRG_AUDIT_STATUS_CHANGE)",
-        GrievanceUpdate.new_status == "Resolved"
-    ).order_by(GrievanceUpdate.id.desc()).first()
-
-    if trigger_row and payload.officer_notes.strip() and "Officer ATR:" not in (trigger_row.notes or ""):
-        trigger_row.notes = f"{trigger_row.notes} | Officer ATR: {payload.officer_notes.strip()}"
-        db.commit()
+    # TRG_AUDIT_STATUS_CHANGE kernel trigger has already logged the Resolved transition atomically.
+    # The application audit row above captures officer ATR notes — no double-write needed.
 
     db.expire_all()
     db.refresh(grv)
@@ -1111,3 +1232,72 @@ def sahayak_agent_chat(payload: SahayakChatRequest, db: Session = Depends(get_db
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Sahayak Agent execution error: {str(e)}"
         )
+
+
+# ==============================================================================
+# Feature: CSV Data Export Endpoint
+# ==============================================================================
+
+@app.get(
+    f"{settings.API_PREFIX}/export/csv",
+    tags=["Data Export"]
+)
+def export_grievances_csv(
+    status_filter: Optional[str] = Query(None, alias="status"),
+    category: Optional[str] = Query(None),
+    priority: Optional[str] = Query(None),
+    sla_breached: Optional[bool] = Query(None, description="If true, only export SLA-breached grievances"),
+    db: Session = Depends(get_db)
+):
+    """
+    Export grievances from IBM Db2 as a CSV file.
+    Supports filtering by status, category, priority, and SLA breach status.
+    """
+    try:
+        if sla_breached:
+            sql = text(
+                "SELECT tracking_id, citizen_name, contact, category, subject, ward, priority, status, "
+                "created_at, resolved_at, ai_priority, ai_summary, "
+                "(DAYS(CURRENT DATE) - DAYS(DATE(created_at))) AS days_open "
+                "FROM grievances "
+                "WHERE status != 'Resolved' "
+                "AND (DAYS(CURRENT DATE) - DAYS(DATE(created_at))) > 15 "
+                "ORDER BY days_open DESC "
+                "FETCH FIRST 500 ROWS ONLY"
+            )
+            rows = db.execute(sql).fetchall()
+            columns = ["tracking_id", "citizen_name", "contact", "category", "subject", "ward",
+                      "priority", "status", "created_at", "resolved_at", "ai_priority", "ai_summary", "days_open"]
+        else:
+            query = db.query(Grievance)
+            if status_filter:
+                query = query.filter(Grievance.status.ilike(f"%{status_filter}%"))
+            if category:
+                query = query.filter(Grievance.category.ilike(f"%{category}%"))
+            if priority:
+                query = query.filter(Grievance.priority.ilike(f"%{priority}%"))
+            items = query.order_by(Grievance.created_at.desc()).limit(500).all()
+            rows = [(
+                g.tracking_id, g.citizen_name, g.contact, g.category, g.subject,
+                g.ward, g.priority, g.status,
+                g.created_at.isoformat() if g.created_at else "",
+                g.resolved_at.isoformat() if g.resolved_at else "",
+                getattr(g, "ai_priority", ""), getattr(g, "ai_summary", "")
+            ) for g in items]
+            columns = ["tracking_id", "citizen_name", "contact", "category", "subject",
+                      "ward", "priority", "status", "created_at", "resolved_at", "ai_priority", "ai_summary"]
+
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow(columns)
+        for row in rows:
+            writer.writerow([str(v) if v is not None else "" for v in row])
+
+        output.seek(0)
+        return StreamingResponse(
+            io.BytesIO(output.getvalue().encode("utf-8-sig")),
+            media_type="text/csv",
+            headers={"Content-Disposition": "attachment; filename=cpgrams_export.csv"}
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"CSV export error: {str(e)}")

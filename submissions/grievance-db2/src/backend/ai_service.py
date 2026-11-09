@@ -753,7 +753,7 @@ def tool_ward_status(ward_query: str, db: Any) -> Dict[str, Any]:
                 break
                 
     if not matched_ward:
-        matched_ward = "Ward 14 - Rohini East" if any("rohini" in clean_q for _ in [0]) else (all_wards[0] if all_wards else "Ward 14 - Rohini East")
+        matched_ward = "Ward 14 - Rohini East" if "rohini" in clean_q else (all_wards[0] if all_wards else "Ward 14 - Rohini East")
         
     stats_sql = text("""
         SELECT 

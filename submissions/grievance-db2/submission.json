@@ -128,6 +128,16 @@
       "method": "GET",
       "path": "/api/stats",
       "description": "Summary counters for status, category, and priority distributions"
+    },
+    {
+      "method": "GET",
+      "path": "/api/db2/catalog",
+      "description": "Expose live IBM Db2 system catalog metadata (SYSCAT.TABLES, SYSCAT.INDEXES, SYSCAT.TRIGGERS, SYSCAT.ROUTINES)"
+    },
+    {
+      "method": "GET",
+      "path": "/api/export/csv",
+      "description": "Backend CSV streaming export with category, priority, status, and SLA breach filters"
     }
   ],
   "healthcheck_url": "http://localhost:8000/api/health",

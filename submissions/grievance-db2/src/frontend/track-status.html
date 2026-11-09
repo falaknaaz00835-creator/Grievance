@@ -1,11 +1,12 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="description" content="Track your Public Grievance online on CPGRAMS - Government of India">
     <title>Track Grievance Status - CPGRAMS | Government of India</title>
-    <link rel="stylesheet" href="css/style.css">
+        <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='16' fill='%231a2744'/><text y='68' x='12' font-size='58' font-family='Arial,sans-serif' font-weight='bold' fill='white'>CP</text></svg>">
+<link rel="stylesheet" href="css/style.css">
 </head>
 <body>
     <a href="#main-content" class="skip-link">Skip to main content</a>
@@ -69,9 +70,15 @@
                     <span class="brand-subtitle" data-i18n="cpgrams_subtitle">Centralized Public Grievance Redress and Monitoring System</span>
                 </div>
             </div>
-            <button class="menu-toggle" aria-expanded="false" aria-controls="main-nav" aria-label="Toggle navigation menu">
+                        <div style="display:flex;align-items:center;gap:0.75rem;">
+                <span id="db2-live-badge" class="db2-live-badge db2-badge--checking" title="IBM Db2 connection status" aria-live="polite">
+                    <span class="db2-pulse"></span>
+                    <span id="db2-badge-text">IBM Db2…</span>
+                </span>
+                <button class="menu-toggle" aria-expanded="false" aria-controls="main-nav" aria-label="Toggle navigation menu">
                 <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h18M3 6h18M3 18h18"/></svg>
             </button>
+            </div>
             <nav id="main-nav" class="main-nav">
                 <ul>
                     <li><a href="index.html" data-i18n="nav_home">Home</a></li>
@@ -176,6 +183,19 @@
                             </div>
                         </div>
                     </div>
+                        <!-- SLA Countdown Bar — Powered by IBM Db2 DAYS() date arithmetic -->
+                        <div class="sla-countdown-wrap" id="sla-countdown-wrap" style="margin-top:1.25rem;display:none;">
+                            <div class="sla-countdown-label">
+                                <span>&#128336; Citizen Charter SLA (15-Day Window)</span>
+                                <span class="sla-days-left" id="sla-days-label">–</span>
+                            </div>
+                            <div class="sla-bar-track">
+                                <div class="sla-bar-fill" id="sla-bar-fill" style="width:0%"></div>
+                            </div>
+                            <div style="font-size:0.72rem;color:var(--color-text-muted);margin-top:0.3rem;">
+                                Computed live via <code style="font-size:0.68rem;background:#f1f5f9;padding:0.1rem 0.3rem;border-radius:3px;">DAYS(CURRENT DATE) - DAYS(DATE(created_at))</code> in IBM Db2
+                            </div>
+                        </div>
                 </div>
 
                 <!-- 4-Stage Visual Timeline -->
@@ -332,5 +352,65 @@
 
     <!-- Scripts -->
     <script src="js/main.js"></script>
+    <script>
+    (function() {
+        var badge = document.getElementById('db2-live-badge');
+        var badgeText = document.getElementById('db2-badge-text');
+        if (!badge) return;
+        var API = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+            ? 'http://localhost:8000/api' : '/api';
+        function checkDb2() {
+            fetch(API + '/health', { method: 'GET', cache: 'no-cache' })
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    if (data.database && data.database.status === 'connected') {
+                        badge.className = 'db2-live-badge';
+                        badgeText.textContent = 'IBM Db2 Live ✓';
+                        badge.title = 'Connected to ' + data.database.database + ' · ' + data.database.total_grievances + ' dockets';
+                    } else {
+                        badge.className = 'db2-live-badge db2-badge--error';
+                        badgeText.textContent = 'Db2 Degraded';
+                    }
+                }).catch(function() {
+                    badge.className = 'db2-live-badge db2-badge--error';
+                    badgeText.textContent = 'Db2 Offline';
+                });
+        }
+        checkDb2();
+        setInterval(checkDb2, 30000);
+    })();
+    </script>
+    <script>
+    // SLA Countdown Bar — activated when grievance data is loaded from IBM Db2
+    window.updateSLABar = function(daysOpen, isResolved) {
+        var wrap = document.getElementById('sla-countdown-wrap');
+        var fill = document.getElementById('sla-bar-fill');
+        var label = document.getElementById('sla-days-label');
+        if (!wrap || !fill || !label) return;
+        wrap.style.display = 'block';
+        var pct = Math.min((daysOpen / 15) * 100, 100);
+        fill.style.width = pct + '%';
+        if (isResolved) {
+            fill.className = 'sla-bar-fill sla-safe';
+            label.className = 'sla-days-left sla-safe';
+            label.textContent = 'Resolved ✓';
+        } else if (daysOpen > 15) {
+            fill.className = 'sla-bar-fill sla-breach';
+            label.className = 'sla-days-left sla-breach';
+            label.textContent = 'SLA BREACHED by ' + (daysOpen - 15) + ' day(s)';
+        } else if (daysOpen >= 10) {
+            fill.className = 'sla-bar-fill sla-warning';
+            label.className = 'sla-days-left sla-warning';
+            label.textContent = (15 - daysOpen) + ' day(s) remaining';
+        } else {
+            fill.className = 'sla-bar-fill sla-safe';
+            label.className = 'sla-days-left sla-safe';
+            label.textContent = (15 - daysOpen) + ' day(s) remaining';
+        }
+    };
+    </script>
 </body>
 </html>
+
+
+

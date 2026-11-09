@@ -1,11 +1,12 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Officer Redressal Console & AI Action Drafter | CPGRAMS - IBM Db2</title>
     <meta name="description" content="Administrative action cockpit for municipal nodal officers powered by IBM Db2 Community Edition and LangChain AI Action Drafter.">
-    <link rel="stylesheet" href="css/style.css">
+        <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='16' fill='%231a2744'/><text y='68' x='12' font-size='58' font-family='Arial,sans-serif' font-weight='bold' fill='white'>CP</text></svg>">
+<link rel="stylesheet" href="css/style.css">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -193,9 +194,15 @@
                     <span class="brand-subtitle">Centralized Public Grievance Redress & Monitoring System</span>
                 </div>
             </div>
-            <button class="menu-toggle" aria-expanded="false" aria-controls="main-nav" aria-label="Toggle navigation menu">
+                        <div style="display:flex;align-items:center;gap:0.75rem;">
+                <span id="db2-live-badge" class="db2-live-badge db2-badge--checking" title="IBM Db2 connection status" aria-live="polite">
+                    <span class="db2-pulse"></span>
+                    <span id="db2-badge-text">IBM Db2…</span>
+                </span>
+                <button class="menu-toggle" aria-expanded="false" aria-controls="main-nav" aria-label="Toggle navigation menu">
                 <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h18M3 6h18M3 18h18"/></svg>
             </button>
+            </div>
             <nav id="main-nav" class="main-nav">
                 <ul>
                     <li><a href="index.html">Home</a></li>
@@ -245,7 +252,22 @@
         </div>
 
         <!-- Filter & Search Toolbar -->
-        <div class="officer-toolbar">
+                    <!-- SP_ESCALATE_OVERDUE — Native IBM Db2 Stored Procedure Trigger -->
+            <div style="background:#fef2f2;border:1.5px solid #fecaca;border-radius:8px;padding:1rem 1.25rem;margin-bottom:1.5rem;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.75rem;">
+                <div>
+                    <div style="font-weight:700;color:#991b1b;font-size:0.875rem;margin-bottom:0.2rem;">
+                        🗄️ IBM Db2 Native Stored Procedure
+                    </div>
+                    <div style="font-size:0.8125rem;color:#7f1d1d;">
+                        <code style="background:#fee2e2;padding:0.1rem 0.4rem;border-radius:3px;font-size:0.75rem;">SP_ESCALATE_OVERDUE</code> — Elevates all overdue dockets (&gt;15 days) to Critical priority using Db2 date arithmetic
+                    </div>
+                    <div style="font-size:0.72rem;color:#b91c1c;margin-top:0.2rem;" id="sp-result-line"></div>
+                </div>
+                <button class="btn--sp-escalate" id="btn-sp-escalate" onclick="runSpEscalate(this)" title="Execute SP_ESCALATE_OVERDUE in IBM Db2">
+                    <span class="sp-pulse"></span>
+                    Run SP_ESCALATE_OVERDUE
+                </button>
+            </div><div class="officer-toolbar">
             <div class="filter-group">
                 <label for="dept-filter" style="font-size: 0.8125rem; font-weight: 600; color: #475569;">Department:</label>
                 <select id="dept-filter" class="filter-select">
@@ -678,5 +700,57 @@
             loadDockets();
         });
     </script>
+    <script>
+    (function() {
+        var badge = document.getElementById('db2-live-badge');
+        var badgeText = document.getElementById('db2-badge-text');
+        if (!badge) return;
+        var API = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+            ? 'http://localhost:8000/api' : '/api';
+        function checkDb2() {
+            fetch(API + '/health', { method: 'GET', cache: 'no-cache' })
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    if (data.database && data.database.status === 'connected') {
+                        badge.className = 'db2-live-badge';
+                        badgeText.textContent = 'IBM Db2 Live ✓';
+                        badge.title = 'Connected to ' + data.database.database + ' · ' + data.database.total_grievances + ' dockets';
+                    } else {
+                        badge.className = 'db2-live-badge db2-badge--error';
+                        badgeText.textContent = 'Db2 Degraded';
+                    }
+                }).catch(function() {
+                    badge.className = 'db2-live-badge db2-badge--error';
+                    badgeText.textContent = 'Db2 Offline';
+                });
+        }
+        checkDb2();
+        setInterval(checkDb2, 30000);
+    })();
+    </script>
+    <script>
+    function runSpEscalate(btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<span class="sp-pulse"></span> Executing Db2 SP...';
+        var API = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+            ? 'http://localhost:8000/api' : '/api';
+        fetch(API + '/escalate-overdue', { method: 'POST' })
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                btn.disabled = false;
+                btn.innerHTML = '&#10003; SP Executed (' + (data.escalated_count || 0) + ' escalated)';
+                btn.style.background = 'linear-gradient(135deg,#15803d,#166534)';
+                var res = document.getElementById('sp-result-line');
+                if (res) res.textContent = 'Result: ' + (data.message || '') + ' Method: ' + (data.execution_method || '');
+            })
+            .catch(function(e) {
+                btn.disabled = false;
+                btn.innerHTML = '&#9888; Error — Retry';
+                btn.style.background = '';
+            });
+    }
+    </script>
 </body>
 </html>
+
+

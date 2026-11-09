@@ -3,8 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="CPGRAMS - Centralized Public Grievance Redress and Monitoring System, Government of India. File and track grievances online.">
+    <meta name="description" content="CPGRAMS - Centralized Public Grievance Redress and Monitoring System, Government of India. File and track grievances online. Powered by IBM Db2 Community Edition and LangChain AI.">
+    <meta property="og:title" content="CPGRAMS AI — IBM Db2Hack 2026 Submission">
+    <meta property="og:description" content="AI-powered citizen grievance portal using IBM Db2, LangChain, stored procedures, triggers, and NL-to-SQL.">
+    <meta property="og:type" content="website">
     <title>CPGRAMS | Government of India - Public Grievance Portal</title>
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='16' fill='%231a2744'/><text y='68' x='12' font-size='58' font-family='Arial,sans-serif' font-weight='bold' fill='white'>CP</text></svg>">
     <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
@@ -70,9 +74,15 @@
                     <span class="brand-subtitle" data-i18n="cpgrams_subtitle">Centralized Public Grievance Redress & Monitoring System</span>
                 </div>
             </div>
-            <button class="menu-toggle" aria-expanded="false" aria-controls="main-nav" aria-label="Toggle navigation menu">
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h18M3 6h18M3 18h18"/></svg>
-            </button>
+            <div style="display:flex;align-items:center;gap:0.75rem;">
+                <span id="db2-live-badge" class="db2-live-badge db2-badge--checking" title="IBM Db2 Community Edition connection status" aria-live="polite">
+                    <span class="db2-pulse"></span>
+                    <span id="db2-badge-text">IBM Db2…</span>
+                </span>
+                <button class="menu-toggle" aria-expanded="false" aria-controls="main-nav" aria-label="Toggle navigation menu">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h18M3 6h18M3 18h18"/></svg>
+                </button>
+            </div>
             <nav id="main-nav" class="main-nav">
                 <ul>
                     <li><a href="index.html" class="active" aria-current="page" data-i18n="nav_home">Home</a></li>
@@ -292,5 +302,35 @@
 
     <!-- Scripts -->
     <script src="js/main.js"></script>
+    <script>
+    // IBM Db2 Live Badge — polls /api/health and updates badge color/text
+    (function() {
+        const badge = document.getElementById('db2-live-badge');
+        const badgeText = document.getElementById('db2-badge-text');
+        if (!badge) return;
+        const API = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+            ? 'http://localhost:8000/api' : '/api';
+        function checkDb2() {
+            fetch(API + '/health', { method: 'GET', cache: 'no-cache', signal: AbortSignal.timeout(4000) })
+                .then(r => r.json())
+                .then(data => {
+                    if (data.database && data.database.status === 'connected') {
+                        badge.className = 'db2-live-badge';
+                        badgeText.textContent = 'IBM Db2 Live ✓';
+                        badge.title = `Connected to ${data.database.database} · ${data.database.total_grievances} dockets`;
+                    } else {
+                        badge.className = 'db2-live-badge db2-badge--error';
+                        badgeText.textContent = 'Db2 Degraded';
+                    }
+                })
+                .catch(() => {
+                    badge.className = 'db2-live-badge db2-badge--error';
+                    badgeText.textContent = 'Db2 Offline';
+                });
+        }
+        checkDb2();
+        setInterval(checkDb2, 30000);
+    })();
+    </script>
 </body>
 </html>

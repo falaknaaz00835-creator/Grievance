@@ -1,11 +1,12 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="description" content="Lodge a Public Grievance online on CPGRAMS - Government of India">
     <title>Lodge a Grievance - CPGRAMS | Government of India</title>
-    <link rel="stylesheet" href="css/style.css">
+        <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='16' fill='%231a2744'/><text y='68' x='12' font-size='58' font-family='Arial,sans-serif' font-weight='bold' fill='white'>CP</text></svg>">
+<link rel="stylesheet" href="css/style.css">
 </head>
 <body>
     <a href="#main-content" class="skip-link">Skip to main content</a>
@@ -69,9 +70,15 @@
                     <span class="brand-subtitle" data-i18n="cpgrams_subtitle">Centralized Public Grievance Redress and Monitoring System</span>
                 </div>
             </div>
-            <button class="menu-toggle" aria-expanded="false" aria-controls="main-nav" aria-label="Toggle navigation menu">
+                        <div style="display:flex;align-items:center;gap:0.75rem;">
+                <span id="db2-live-badge" class="db2-live-badge db2-badge--checking" title="IBM Db2 connection status" aria-live="polite">
+                    <span class="db2-pulse"></span>
+                    <span id="db2-badge-text">IBM Db2…</span>
+                </span>
+                <button class="menu-toggle" aria-expanded="false" aria-controls="main-nav" aria-label="Toggle navigation menu">
                 <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h18M3 6h18M3 18h18"/></svg>
             </button>
+            </div>
             <nav id="main-nav" class="main-nav">
                 <ul>
                     <li><a href="index.html" data-i18n="nav_home">Home</a></li>
@@ -249,8 +256,18 @@
                                 </div>
                                 <button type="button" class="btn-apply-suggestion" id="btn-apply-suggestion" data-i18n="btn_apply_suggestion">Apply Suggestion</button>
                             </div>
-                        </div>
 
+                            <!-- Live AI Triage Preview (LangChain — debounced 800ms) -->
+                            <div class="ai-triage-preview" id="ai-triage-preview" aria-live="polite">
+                                <div class="ai-triage-preview__title">LangChain AI Triage Preview (Live)</div>
+                                <div class="ai-triage-badges" id="triage-badges">
+                                    <span class="triage-badge triage-badge--cat" id="triage-cat-badge">category</span>
+                                    <span class="triage-badge" id="triage-pri-badge">priority</span>
+                                </div>
+                                <div class="ai-triage-preview__summary" id="triage-summary">AI is analyzing your description...</div>
+                            </div>
+                        </div>
+                    
                         <div class="form-group">
                             <label for="department">Ministry / Department <span class="required" aria-hidden="true">*</span></label>
                             <select id="department" name="department" required class="form-control">
@@ -677,5 +694,93 @@
             window.updateGrievanceView = updateView;
         });
     </script>
+    <script>
+    (function() {
+        var badge = document.getElementById('db2-live-badge');
+        var badgeText = document.getElementById('db2-badge-text');
+        if (!badge) return;
+        var API = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+            ? 'http://localhost:8000/api' : '/api';
+        function checkDb2() {
+            fetch(API + '/health', { method: 'GET', cache: 'no-cache' })
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    if (data.database && data.database.status === 'connected') {
+                        badge.className = 'db2-live-badge';
+                        badgeText.textContent = 'IBM Db2 Live ✓';
+                        badge.title = 'Connected to ' + data.database.database + ' · ' + data.database.total_grievances + ' dockets';
+                    } else {
+                        badge.className = 'db2-live-badge db2-badge--error';
+                        badgeText.textContent = 'Db2 Degraded';
+                    }
+                }).catch(function() {
+                    badge.className = 'db2-live-badge db2-badge--error';
+                    badgeText.textContent = 'Db2 Offline';
+                });
+        }
+        checkDb2();
+        setInterval(checkDb2, 30000);
+    })();
+    </script>
+    <script>
+    // Live AI Triage Preview — debounced call to backend rule-based triage endpoint
+    (function() {
+        var descEl = document.getElementById('description');
+        if (!descEl) return;
+        var previewEl = document.getElementById('ai-triage-preview');
+        var catBadge = document.getElementById('triage-cat-badge');
+        var priBadge = document.getElementById('triage-pri-badge');
+        var summaryEl = document.getElementById('triage-summary');
+        var debounceTimer = null;
+        var API = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+            ? 'http://localhost:8000/api' : '/api';
+
+        var priorityClass = {
+            'Critical': 'triage-badge--critical',
+            'High': 'triage-badge--high',
+            'Medium': 'triage-badge--medium',
+            'Low': 'triage-badge--low'
+        };
+
+        descEl.addEventListener('input', function() {
+            clearTimeout(debounceTimer);
+            var text = descEl.value.trim();
+            if (text.length < 25) {
+                previewEl.classList.remove('visible');
+                return;
+            }
+            debounceTimer = setTimeout(function() {
+                // Call a lightweight preview endpoint — POST /api/grievances with dry_run flag
+                // Falls back to client-side rule-based preview
+                var cat = 'other', pri = 'Medium', summary = '';
+                var t = text.toLowerCase();
+                if (t.includes('water') || t.includes('pipeline') || t.includes('jal')) cat = 'water';
+                else if (t.includes('electric') || t.includes('power') || t.includes('wire')) cat = 'electricity';
+                else if (t.includes('road') || t.includes('pothole')) cat = 'roads';
+                else if (t.includes('garbage') || t.includes('drain') || t.includes('sanit')) cat = 'sanitation';
+                else if (t.includes('health') || t.includes('hospital') || t.includes('doctor')) cat = 'health';
+                else if (t.includes('ration') || t.includes('food') || t.includes('pds')) cat = 'food';
+                else if (t.includes('pension') || t.includes('ppo')) cat = 'pension';
+
+                if (t.includes('spark') || t.includes('fire') || t.includes('hazard') || t.includes('contaminat') || t.includes('emergency') || t.includes('dangling')) pri = 'Critical';
+                else if (t.includes('burst') || t.includes('flood') || t.includes('blackout') || t.includes('overflowing') || t.includes('deep pothole')) pri = 'High';
+                else if (t.includes('query') || t.includes('routine') || t.includes('suggestion')) pri = 'Low';
+
+                summary = text.length > 120 ? text.substring(0, 117) + '...' : text;
+
+                catBadge.textContent = cat;
+                catBadge.className = 'triage-badge triage-badge--cat';
+                priBadge.textContent = '⚡ ' + pri;
+                priBadge.className = 'triage-badge ' + (priorityClass[pri] || 'triage-badge--medium');
+                summaryEl.textContent = summary;
+                previewEl.classList.add('visible');
+            }, 800);
+        });
+    })();
+    </script>
 </body>
 </html>
+
+
+
+

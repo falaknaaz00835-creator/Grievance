@@ -961,33 +961,33 @@
                         const currentLang = localStorage.getItem(STORAGE_KEY_LANG) || "en";
                         rec.lang = voiceLocaleMap[currentLang] || "en-IN";
 
-                        let initialText = "";
+                        let basePrefix = "";
 
                         rec.onstart = () => {
                             if (descInput) {
-                                initialText = descInput.value.trim();
+                                basePrefix = descInput.value.trim();
                             }
                             showToast("🎙️ Voice Active", `Speak now in ${languageNames[currentLang] || 'your language'}...`, "info", 2500);
                         };
 
                         rec.onresult = (e) => {
-                            let interimTranscript = "";
                             let finalTranscript = "";
-                            for (let i = e.resultIndex; i < e.results.length; ++i) {
+                            let interimTranscript = "";
+                            for (let i = 0; i < e.results.length; ++i) {
+                                const transcript = e.results[i][0].transcript;
                                 if (e.results[i].isFinal) {
-                                    finalTranscript += e.results[i][0].transcript;
+                                    finalTranscript += (finalTranscript ? " " : "") + transcript.trim();
                                 } else {
-                                    interimTranscript += e.results[i][0].transcript;
+                                    interimTranscript += (interimTranscript ? " " : "") + transcript.trim();
                                 }
                             }
 
-                            // Update base text only with final transcripts
-                            if (finalTranscript) {
-                                initialText += (initialText ? " " : "") + finalTranscript;
-                            }
-
-                            // Display current confirmed text + temporary interim text
-                            const currentCombined = initialText + (interimTranscript ? (initialText ? " " : "") + interimTranscript : "");
+                            // Cleanly combine prefix + final + interim without duplicating text
+                            const parts = [];
+                            if (basePrefix) parts.push(basePrefix);
+                            if (finalTranscript) parts.push(finalTranscript);
+                            if (interimTranscript) parts.push(interimTranscript);
+                            const currentCombined = parts.join(" ");
 
                             if (descInput) {
                                 descInput.value = currentCombined;
@@ -1493,6 +1493,16 @@
                     escalateCard.style.display = "flex";
                 }
             }
+
+            // Update IBM Db2 Citizen Charter SLA countdown bar
+            const createdDate = new Date(grievance.created_at || Date.now());
+            const now = new Date();
+            const diffDays = Math.max(0, Math.floor((now - createdDate) / (1000 * 60 * 60 * 24)));
+            const daysOpen = (grievance.days_open !== undefined && grievance.days_open !== null) ? Number(grievance.days_open) : diffDays;
+            const isResolved = (grievance.status || "").toLowerCase() === "resolved";
+            if (typeof window.updateSLABar === "function") {
+                window.updateSLABar(daysOpen, isResolved);
+            }
         }
 
         function render4StageTimeline(grievance) {
@@ -1996,33 +2006,35 @@
                         const lang = localStorage.getItem(STORAGE_KEY_LANG) || "en";
                         rec.lang = voiceLocaleMap[lang] || "en-IN";
 
-                        let initialText = "";
+                        let basePrefix = "";
 
                         rec.onstart = () => {
                             if (inputEl) {
-                                initialText = inputEl.value.trim();
+                                basePrefix = inputEl.value.trim();
                             }
                             micBtn.classList.add("listening");
                             showToast("🎙️ Sahayak Listening", `Speak your question in ${languageNames[lang] || 'your language'}...`, "info", 2000);
                         };
 
                         rec.onresult = (e) => {
-                            let interimTranscript = "";
                             let finalTranscript = "";
-                            for (let i = e.resultIndex; i < e.results.length; ++i) {
+                            let interimTranscript = "";
+                            for (let i = 0; i < e.results.length; ++i) {
+                                const transcript = e.results[i][0].transcript;
                                 if (e.results[i].isFinal) {
-                                    finalTranscript += e.results[i][0].transcript;
+                                    finalTranscript += (finalTranscript ? " " : "") + transcript.trim();
                                 } else {
-                                    interimTranscript += e.results[i][0].transcript;
+                                    interimTranscript += (interimTranscript ? " " : "") + transcript.trim();
                                 }
                             }
 
-                            if (finalTranscript) {
-                                initialText += (initialText ? " " : "") + finalTranscript;
-                            }
+                            const parts = [];
+                            if (basePrefix) parts.push(basePrefix);
+                            if (finalTranscript) parts.push(finalTranscript);
+                            if (interimTranscript) parts.push(interimTranscript);
 
                             if (inputEl) {
-                                inputEl.value = initialText + (interimTranscript ? (initialText ? " " : "") + interimTranscript : "");
+                                inputEl.value = parts.join(" ");
                             }
                         };
 

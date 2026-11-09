@@ -35,49 +35,49 @@ This project transforms CPGRAMS into an enterprise-ready, AI-augmented citizen g
 
 The system is deployed as a modular, three-tier containerized stack orchestrated via Docker Compose:
 
-```
-+-------------------------------------------------------------------------+
-|                         CITIZEN & ADMIN UI                              |
-|   HTML5 / Accessible CSS / ES6 JS / Multi-Language / Nginx (Port 80)    |
-|   - Lodge Grievance Wizard (AI Tags + Hotspot Warnings)                 |
-|   - Track Status Timeline (Milestones + Escalation)                     |
-|   - Officer Redressal Console (LangChain AI Action Drafter & Resolution)|
-|   - Analytics Dashboard (Db2 SLA Breaches + Department Load)            |
-|   - "Ask the Data" Interface (LangChain NL-to-SQL + Results Table)      |
-+------------------------------------+------------------------------------+
-                                     | Reverse Proxy / API Requests
-                                     v
-+-------------------------------------------------------------------------+
-|                     FASTAPI PYTHON 3.11 BACKEND                         |
-|                       (Port 8000 / grievance-api)                       |
-|                                                                         |
-|  +-----------------------------+     +-------------------------------+  |
-|  |     LangChain AI Engine     |     |    Security Guardrail Engine  |  |
-|  | - Triage Prompt Chain       |     | - SELECT-only Whitelist       |  |
-|  | - NL-to-SQL Translation     |     | - DDL/DML Rejection           |  |
-|  | - Deterministic Fallback    |     | - Semicolon & Comment Strip   |  |
-|  | - Ward Hotspot Clustering   |     | - Enforce FETCH FIRST Syntax  |  |
-|  +--------------+--------------+     +---------------+---------------+  |
-|                 |                                    |                  |
-|                 +-----------------+------------------+                  |
-|                                   | SQLAlchemy (ibm_db_sa)              |
-+-----------------------------------+-------------------------------------+
-                                    | Native TCP Port 50000
-                                    v
-+-------------------------------------------------------------------------+
-|                  IBM Db2 COMMUNITY EDITION 11.5.8.0                     |
-|                      (GRIEVDB / grievance-db2)                          |
-|                                                                         |
-|  * departments: Administrative nodal authorities & contact registry     |
-|  * grievances: Citizen dockets + AI triage columns (ai_priority, etc.)  |
-|  * grievance_updates: Immutable audit log & stage history               |
-|  * B-Tree Indexes on tracking_id, ward, category, priority, status      |
-|  * Dynamic Catalog Reflection (SYSCAT.COLUMNS) & Auto-REORG             |
-|  * Native Date Arithmetic: DAYS(CURRENT DATE) - DAYS(DATE(created_at))  |
-+-------------------------------------------------------------------------+
+```mermaid
+flowchart TD
+    A["👤 Citizen / Admin Browser\n(HTML5 / ES6 / Leaflet / Chart.js)"] -->|"HTTP via Nginx :80"| B["🌐 Nginx Reverse Proxy\n(Static Frontend + API Proxy)"]
+    B -->|"FastAPI REST :8000"| C["⚡ FastAPI Backend\n(Python 3.11 / Docker)"]
+
+    C --> D["🤖 LangChain AI Engine"]
+    C --> E["🛡️ Security Guardrail Engine"]
+    C --> F["📊 IBM Db2 SQLAlchemy Layer\n(ibm_db_sa / ibm_db)"]
+
+    D -->|"Triage · NL-to-SQL · Action Drafter · Sahayak Agent"| D
+    E -->|"SELECT-only · DDL reject · Table allowlist · FETCH FIRST"| E
+
+    F -->|"Native TCP :50000"| G["🗄️ IBM Db2 Community Edition 11.5.8.0\n(GRIEVDB)"]
+
+    subgraph DB2_ENGINE["IBM Db2 Engine — GRIEVDB"]
+        G --> H["📋 departments\n(nodal authorities & contacts)"]
+        G --> I["📝 grievances\n(dockets + AI triage columns)"]
+        G --> J["🕐 grievance_updates\n(immutable audit log)"]
+        G --> K["⚙️ SP_ESCALATE_OVERDUE\n(Native Stored Procedure)"]
+        G --> L["🔔 TRG_AUDIT_STATUS_CHANGE\n(Kernel Trigger)"]
+        G --> M["📅 DAYS() Date Arithmetic\nSLA Breach Detection"]
+        G --> N["🔍 SYSCAT Reflection\n(Auto-Schema Discovery)"]
+    end
+
+    subgraph AI_FEATURES["AI & Agentic Features (LangChain)"]
+        D --> P["🏷️ Grievance AI Triage\n(Category + Priority + Summary)"]
+        D --> Q["💬 NL-to-SQL Engine\n('Ask the Data')"]
+        D --> R["📄 Officer Action Drafter\n(Bureaucratic Directives)"]
+        D --> S["🤖 Sahayak Agent\n(tool_track_docket · tool_ward_status · tool_civic_knowledge)"]
+    end
+
+    subgraph FRONTEND["Frontend Pages"]
+        A --> T["🏠 index.html — Home"]
+        A --> U["📝 lodge-grievance.html — AI Triage Form"]
+        A --> V["🔍 track-status.html — SLA Timeline"]
+        A --> W["👮 officer.html — Redressal Console"]
+        A --> X["📊 dashboard.html — GIS + Analytics"]
+        A --> Y["🗣️ ask-data.html — NL-to-SQL"]
+    end
 ```
 
----
+
+
 
 ## 🗄️ IBM Db2 Highlights & Technical Depth
 
@@ -269,6 +269,8 @@ curl -s http://localhost:8000/api/health
 | `POST` | `/api/escalate-overdue` | Execute native IBM Db2 Stored Procedure `SP_ESCALATE_OVERDUE` |
 | `GET` | `/api/departments` | List administrative departments and nodal contacts |
 | `GET` | `/api/stats` | High-level summary metrics |
+| `GET` | `/api/db2/catalog` | Live IBM Db2 System Catalog (SYSCAT.TABLES, TRIGGERS, ROUTINES) metadata |
+| `GET` | `/api/export/csv` | Stream grievances from IBM Db2 as CSV with SLA breach and category filters |
 
 ### Example 1: Lodge Grievance with AI Triage
 ```bash
