@@ -1,6 +1,6 @@
 /**
  * CPGRAMS Reimagined - Core Frontend Script
- * "Build What Moves India" Prototype
+ * IBM Db2Hack 2026 - AI & Modern Data Apps Track
  * Features:
  * - Accessibility (A-/A/A+ Text resizing, High Contrast mode, Dark Mode)
  * - Modern Toast Notification System (Replacing native alerts)
@@ -809,6 +809,39 @@
     }
 
     // ==========================================================================
+    // 6.5 IBM Db2 Backend API Connector
+    // ==========================================================================
+    async function apiRequest(endpoint, options = {}) {
+        const defaultHeaders = {
+            "Accept": "application/json",
+            "Content-Type": "application/json"
+        };
+        options.headers = { ...defaultHeaders, ...options.headers };
+
+        // Attempt relative /api first (works seamlessly via Docker Nginx reverse proxy)
+        try {
+            const res = await fetch(`/api${endpoint}`, options);
+            if (res.status !== 502 && res.status !== 503) {
+                if (res.status === 404 && !endpoint.startsWith("/grievances/")) {
+                    // Not a backend endpoint
+                } else {
+                    return res;
+                }
+            }
+        } catch (err) {
+            // Relative URL network failure, will try direct port 8000 fallback
+        }
+
+        // Direct fallback to http://localhost:8000/api for local/standalone viewing
+        try {
+            return await fetch(`http://localhost:8000/api${endpoint}`, options);
+        } catch (fallbackErr) {
+            console.error("API request failed on both relative /api and localhost:8000/api", fallbackErr);
+            throw fallbackErr;
+        }
+    }
+
+    // ==========================================================================
     // 7. Lodge Grievance Wizard (Voice, Keywords, GPS, Photo Previews & ID Gen)
     // ==========================================================================
     function initLodgeGrievancePage() {
@@ -923,30 +956,48 @@
                 if (SpeechRec) {
                     try {
                         const rec = new SpeechRec();
-                        rec.continuous = false;
+                        rec.continuous = true;
                         rec.interimResults = true;
                         const currentLang = localStorage.getItem(STORAGE_KEY_LANG) || "en";
                         rec.lang = voiceLocaleMap[currentLang] || "en-IN";
 
+                        let initialText = "";
+
                         rec.onstart = () => {
+                            if (descInput) {
+                                initialText = descInput.value.trim();
+                            }
                             showToast("🎙️ Voice Active", `Speak now in ${languageNames[currentLang] || 'your language'}...`, "info", 2500);
                         };
 
                         rec.onresult = (e) => {
-                            let transcript = "";
-                            for (let i = e.resultIndex; i < e.results.length; i++) {
-                                transcript += e.results[i][0].transcript;
+                            let interimTranscript = "";
+                            let finalTranscript = "";
+                            for (let i = e.resultIndex; i < e.results.length; ++i) {
+                                if (e.results[i].isFinal) {
+                                    finalTranscript += e.results[i][0].transcript;
+                                } else {
+                                    interimTranscript += e.results[i][0].transcript;
+                                }
                             }
 
+                            // Update base text only with final transcripts
+                            if (finalTranscript) {
+                                initialText += (initialText ? " " : "") + finalTranscript;
+                            }
+
+                            // Display current confirmed text + temporary interim text
+                            const currentCombined = initialText + (interimTranscript ? (initialText ? " " : "") + interimTranscript : "");
+
                             if (descInput) {
-                                descInput.value = (descInput.value ? descInput.value + " " : "") + transcript;
+                                descInput.value = currentCombined;
                                 const counter = document.getElementById("desc-counter");
                                 if (counter) counter.textContent = `${descInput.value.length} / 3000`;
                             }
 
                             // Auto subject if empty
-                            if (subjectInput && !subjectInput.value && transcript.length > 5) {
-                                const words = transcript.split(" ").slice(0, 7).join(" ");
+                            if (subjectInput && !subjectInput.value && currentCombined.length > 5) {
+                                const words = currentCombined.split(" ").slice(0, 7).join(" ");
                                 subjectInput.value = words.charAt(0).toUpperCase() + words.slice(1);
                             }
 
@@ -955,7 +1006,9 @@
 
                         rec.onerror = (e) => {
                             console.warn("Speech recognition error:", e.error);
-                            triggerSimulatedVoiceFallback();
+                            if (e.error !== "no-speech") {
+                                triggerSimulatedVoiceFallback();
+                            }
                         };
 
                         rec.onend = () => {
@@ -1132,50 +1185,190 @@
             });
         }
 
-        // --- F. Form Submission & Unique ID Generation ---
+        // --- F. Form Submission & IBM Db2 API Integration ---
         if (submitBtn) {
-            submitBtn.addEventListener("click", () => {
+            submitBtn.addEventListener("click", async () => {
                 const consent = document.getElementById("consent");
                 if (consent && !consent.checked) {
                     showToast("Consent Required", "Please confirm that the information provided is accurate.", "warning");
                     return;
                 }
 
-                const randomDigits = Math.floor(1000 + Math.random() * 9000);
-                const trackingId = `GRV-2026-${randomDigits}`;
-
-                const subjectVal = subjectInput && subjectInput.value ? subjectInput.value : "Public Grievance";
-                const descVal = descInput ? descInput.value : "";
-                const deptVal = deptSelect && deptSelect.selectedIndex > 0 ? deptSelect.options[deptSelect.selectedIndex].text : "Department of Food & Public Distribution";
-                const nameVal = document.getElementById("fullname") ? document.getElementById("fullname").value : "Citizen";
-                const emailVal = document.getElementById("email") ? document.getElementById("email").value : "user@example.com";
-                const mobileVal = document.getElementById("mobile") ? document.getElementById("mobile").value : "9876543210";
-
-                const newGrievance = {
-                    id: trackingId,
-                    subject: subjectVal,
-                    description: descVal,
-                    department: deptVal,
-                    category: document.querySelector('input[name="issue_category"]:checked')?.value || "delay",
-                    name: nameVal,
-                    email: emailVal,
-                    mobile: mobileVal,
-                    filedDate: new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }),
-                    status: "Under Review",
-                    daysPending: 12,
-                    escalated: false,
-                    escalationId: null
-                };
-
-                saveGrievance(newGrievance);
-
-                document.querySelectorAll(".reg-value").forEach(el => el.textContent = trackingId);
-                const trackLink = document.querySelector("#step-confirmation a[href*='track-status']");
-                if (trackLink) {
-                    trackLink.href = `track-status.html?id=${trackingId}`;
+                const descVal = descInput ? descInput.value.trim() : "";
+                if (descVal.length < 10) {
+                    showToast("Description Required", "Please enter a detailed description (minimum 10 characters).", "warning");
+                    return;
                 }
 
-                showToast("Grievance Lodged Successfully!", `Your registration ID is ${trackingId}`, "success", 5000);
+                const subjectVal = subjectInput && subjectInput.value ? subjectInput.value.trim() : "Public Grievance";
+                const nameVal = document.getElementById("fullname") ? document.getElementById("fullname").value.trim() : "Citizen";
+                const emailVal = document.getElementById("email") ? document.getElementById("email").value.trim() : "";
+                const mobileVal = document.getElementById("mobile") ? document.getElementById("mobile").value.trim() : "";
+                const contactVal = [mobileVal, emailVal].filter(Boolean).join(" / ") || "Not Provided";
+                
+                const addressVal = document.getElementById("address") ? document.getElementById("address").value.trim() : "";
+                const wardVal = addressVal ? addressVal.slice(0, 100) : "Ward 14 - Rohini East";
+                const stateSelect = document.getElementById("state");
+                const stateVal = stateSelect && stateSelect.selectedIndex >= 0 ? stateSelect.options[stateSelect.selectedIndex].text : "Delhi (NCT)";
+                const pincodeVal = document.getElementById("pincode") ? document.getElementById("pincode").value.trim() : "110001";
+
+                // Determine category
+                let categoryVal = "water";
+                const checkedRadio = document.querySelector('input[name="issue_category"]:checked');
+                const deptVal = deptSelect && deptSelect.selectedIndex > 0 ? deptSelect.value : "";
+                
+                if (["water", "electricity", "road", "roads", "sanitation", "health", "food", "pension"].includes(deptVal)) {
+                    categoryVal = deptVal === "road" ? "roads" : deptVal;
+                } else if (checkedRadio) {
+                    const radioVal = checkedRadio.value;
+                    const catMap = {
+                        "delay": "water",
+                        "conduct": "sanitation",
+                        "scheme": "pension",
+                        "psu": "electricity",
+                        "corruption": "roads",
+                        "other": "health"
+                    };
+                    categoryVal = catMap[radioVal] || "water";
+                }
+
+                // Show Loading State
+                const originalHtml = submitBtn.innerHTML;
+                submitBtn.disabled = true;
+                submitBtn.innerHTML = `<span>⏳ Submitting to IBM Db2...</span>`;
+                
+                const errorBanner = document.getElementById("submit-error-banner");
+                if (errorBanner) errorBanner.remove();
+
+                try {
+                    const payload = {
+                        citizen_name: nameVal,
+                        contact: contactVal,
+                        category: categoryVal,
+                        subject: subjectVal,
+                        description: descVal,
+                        ward: wardVal,
+                        priority: "Medium",
+                        state: stateVal,
+                        pincode: pincodeVal
+                    };
+
+                    const response = await apiRequest("/grievances", {
+                        method: "POST",
+                        body: JSON.stringify(payload)
+                    });
+
+                    if (!response.ok) {
+                        const errData = await response.json().catch(() => ({}));
+                        throw new Error(errData.detail || `Server returned HTTP ${response.status}`);
+                    }
+
+                    const resData = await response.json();
+                    const trackingId = resData.tracking_id || resData.data?.tracking_id;
+
+                    // Also cache for session drawer
+                    saveGrievance({
+                        id: trackingId,
+                        subject: subjectVal,
+                        description: descVal,
+                        department: deptSelect && deptSelect.selectedIndex > 0 ? deptSelect.options[deptSelect.selectedIndex].text : "Concerned Department",
+                        category: categoryVal,
+                        name: nameVal,
+                        email: emailVal,
+                        mobile: mobileVal,
+                        filedDate: new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }),
+                        status: "Filed",
+                        daysPending: 0,
+                        escalated: false
+                    });
+
+                    // Update UI elements with confirmed tracking ID
+                    document.querySelectorAll(".reg-value").forEach(el => el.textContent = trackingId);
+                    const trackLink = document.querySelector("#step-confirmation a[href*='track-status']");
+                    if (trackLink) {
+                        trackLink.href = `track-status.html?id=${trackingId}`;
+                    }
+
+                    // Populate AI Triage box
+                    if (resData.ai_triage) {
+                        const aiCat = document.getElementById("conf-ai-category");
+                        const aiPri = document.getElementById("conf-ai-priority");
+                        const aiSum = document.getElementById("conf-ai-summary");
+                        const aiMethod = document.getElementById("conf-ai-method");
+
+                        if (aiCat) aiCat.textContent = resData.ai_triage.category;
+                        if (aiPri) {
+                            aiPri.textContent = resData.ai_triage.priority;
+                            aiPri.style.color = resData.ai_triage.priority === "Critical" ? "#dc2626" : (resData.ai_triage.priority === "High" ? "#d97706" : "#2563eb");
+                        }
+                        if (aiSum) aiSum.textContent = resData.ai_triage.summary;
+                        if (aiMethod) aiMethod.textContent = resData.ai_triage.method === "langchain_llm" ? "LangChain LLM Chain" : "Rule-Based AI Classifier";
+                    }
+
+                    // Populate Hotspot / Duplicate box
+                    const hotspotBox = document.getElementById("conf-hotspot-box");
+                    if (hotspotBox && resData.hotspot_alert && resData.hotspot_alert.is_hotspot) {
+                        hotspotBox.style.display = "block";
+                        const msgEl = document.getElementById("conf-hotspot-msg");
+                        if (msgEl) msgEl.textContent = resData.hotspot_alert.message;
+
+                        const dupsList = document.getElementById("conf-duplicates-list");
+                        if (dupsList) {
+                            dupsList.innerHTML = "";
+                            if (resData.potential_duplicates && resData.potential_duplicates.length > 0) {
+                                let html = `<strong style="display:block; margin-top:0.35rem; color:#78350f;">Potential Overlapping Dockets in Db2:</strong><ul style="margin:0.25rem 0 0 1rem; padding:0;">`;
+                                resData.potential_duplicates.forEach(dup => {
+                                    html += `<li><a href="track-status.html?id=${dup.tracking_id}" style="color:#b45309; text-decoration:underline; font-weight:600;">${dup.tracking_id}</a> - ${dup.subject || 'Similar complaint'} (${dup.status})</li>`;
+                                });
+                                html += `</ul>`;
+                                dupsList.innerHTML = html;
+                            }
+                        }
+                    } else if (hotspotBox) {
+                        hotspotBox.style.display = "none";
+                    }
+
+                    showToast("Grievance Lodged in IBM Db2!", `Assigned Tracking ID: ${trackingId}`, "success", 6000);
+
+                    // Transition to confirmation step
+                    if (window.updateGrievanceView) {
+                        window.updateGrievanceView("confirmation");
+                    } else {
+                        document.querySelectorAll('.form-step').forEach(el => el.classList.add('hidden'));
+                        document.getElementById('step-confirmation')?.classList.remove('hidden');
+                        document.querySelector('.stepper')?.classList.add('hidden');
+                        window.scrollTo(0, 0);
+                    }
+                } catch (error) {
+                    console.error("Grievance submission error:", error);
+                    showToast("Submission Failed", "Could not submit to IBM Db2 backend. Please check connection and try again.", "error", 5000);
+
+                    // Add visible error banner in step 5
+                    const step5 = document.getElementById("step-5");
+                    if (step5) {
+                        const banner = document.createElement("div");
+                        banner.id = "submit-error-banner";
+                        banner.className = "alert alert--danger";
+                        banner.style.marginTop = "1rem";
+                        banner.style.borderLeft = "4px solid #dc2626";
+                        banner.style.backgroundColor = "#fef2f2";
+                        banner.style.color = "#991b1b";
+                        banner.style.padding = "0.875rem 1rem";
+                        banner.style.borderRadius = "6px";
+                        banner.innerHTML = `
+                            <strong>⚠️ Submission Error:</strong> Could not connect to the IBM Db2 backend API (${error.message}). Please ensure backend service is running.
+                        `;
+                        const actions = step5.querySelector(".form-actions");
+                        if (actions) {
+                            step5.insertBefore(banner, actions);
+                        } else {
+                            step5.appendChild(banner);
+                        }
+                    }
+                } finally {
+                    submitBtn.disabled = false;
+                    submitBtn.innerHTML = originalHtml;
+                }
             });
         }
     }
@@ -1206,43 +1399,96 @@
             if (statusError) statusError.style.display = "none";
             if (statusResult) statusResult.style.display = "block";
 
-            if (displayRegNum) displayRegNum.textContent = grievance.id;
+            const trackingId = grievance.tracking_id || grievance.id;
+            if (displayRegNum) displayRegNum.textContent = trackingId;
+
+            // Format date
+            let formattedDate = "Recent";
+            if (grievance.created_at) {
+                try {
+                    formattedDate = new Date(grievance.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+                } catch(e) {
+                    formattedDate = grievance.created_at;
+                }
+            } else if (grievance.filedDate) {
+                formattedDate = grievance.filedDate;
+            }
 
             const submittedEl = document.getElementById("meta-submitted");
-            if (submittedEl) submittedEl.textContent = grievance.filedDate || "14 Feb 2026";
+            if (submittedEl) submittedEl.textContent = formattedDate;
 
             const deptEl = document.getElementById("meta-dept");
-            if (deptEl) deptEl.textContent = grievance.department || "Ministry of External Affairs";
+            if (deptEl) deptEl.textContent = grievance.department_name || grievance.department || grievance.ward || "Concerned Department";
 
             const catEl = document.getElementById("meta-cat");
-            if (catEl) catEl.textContent = grievance.category || "Delay in service";
+            if (catEl) {
+                const catStr = grievance.category || "General";
+                catEl.textContent = catStr.charAt(0).toUpperCase() + catStr.slice(1);
+            }
 
+            // Status Badge
             const statusBadge = document.getElementById("status-badge");
             if (statusBadge) {
-                if (grievance.escalated) {
+                const st = (grievance.status || "Filed").toLowerCase();
+                const prio = (grievance.priority || "").toLowerCase();
+
+                if (prio === "critical" || grievance.escalated) {
                     statusBadge.className = "status-badge status-badge--escalated";
                     statusBadge.innerHTML = "<span>🚨</span> Escalated - Priority Review";
+                } else if (st === "resolved") {
+                    statusBadge.className = "status-badge status-badge--resolved";
+                    statusBadge.innerHTML = "<span>✅</span> Resolved";
+                    statusBadge.style.backgroundColor = "#dcfce7";
+                    statusBadge.style.color = "#15803d";
+                } else if (st === "forwarded to dept") {
+                    statusBadge.className = "status-badge status-badge--forwarded";
+                    statusBadge.innerHTML = "<span>📤</span> Forwarded to Dept";
+                    statusBadge.style.backgroundColor = "#e0f2fe";
+                    statusBadge.style.color = "#0369a1";
                 } else {
                     statusBadge.className = "status-badge status-badge--review";
-                    statusBadge.innerHTML = "<span>⏳</span> Under Review";
+                    statusBadge.innerHTML = "<span>⏳</span> " + (grievance.status || "Under Review");
+                }
+            }
+
+            // Update latest note alert
+            const alertNote = document.querySelector("#status-result .alert--info strong");
+            if (alertNote && alertNote.parentElement) {
+                if (grievance.updates && grievance.updates.length > 0) {
+                    // Prioritize operational human/officer updates over raw kernel trigger telemetry
+                    const humanUpdates = grievance.updates.filter(u => u.updated_by && !u.updated_by.includes("TRG_AUDIT"));
+                    const latest = humanUpdates.length > 0 ? humanUpdates[humanUpdates.length - 1] : grievance.updates[grievance.updates.length - 1];
+                    alertNote.parentElement.innerHTML = `
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="alert-icon"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+                        <div>
+                            <strong>Latest Officer Note (${latest.updated_by}):</strong> ${latest.notes || "Grievance status updated in IBM Db2."}
+                        </div>
+                    `;
                 }
             }
 
             render4StageTimeline(grievance);
 
+            // Escalation card display
             if (escalateCard) {
-                if (grievance.escalated) {
+                const isCrit = (grievance.priority || "").toLowerCase() === "critical" || grievance.escalated;
+                const isRes = (grievance.status || "").toLowerCase() === "resolved";
+
+                if (isCrit) {
+                    escalateCard.style.display = "flex";
                     escalateCard.innerHTML = `
                         <div class="escalation-content">
                             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#15803d" stroke-width="2" class="escalation-icon"><circle cx="12" cy="12" r="10"/><polyline points="20 6 9 17 4 12"/></svg>
                             <div>
-                                <h4 class="escalation-title" style="color: #15803d;">Grievance Escalated Successfully</h4>
-                                <p class="escalation-text" style="color: #166534;">Your grievance has been marked as <strong>High Priority</strong> and forwarded to the Joint Secretary / Appellate Nodal Officer (Docket #${grievance.escalationId || 'ESC-2026-9481'}).</p>
+                                <h4 class="escalation-title" style="color: #15803d;">Grievance Escalated in IBM Db2</h4>
+                                <p class="escalation-text" style="color: #166534;">Your grievance is currently marked as <strong>High / Critical Priority</strong> and forwarded to the Appellate Nodal Officer for urgent disposal.</p>
                             </div>
                         </div>
                     `;
                     escalateCard.style.borderColor = "#86efac";
                     escalateCard.style.background = "#f0fdf4";
+                } else if (isRes) {
+                    escalateCard.style.display = "none";
                 } else {
                     escalateCard.style.display = "flex";
                 }
@@ -1253,56 +1499,153 @@
             const timelineContainer = document.getElementById("timeline-container");
             if (!timelineContainer) return;
 
-            const isEscalated = grievance.escalated;
+            const st = (grievance.status || "Filed").toLowerCase();
+            const isEscalated = (grievance.priority || "").toLowerCase() === "critical" || grievance.escalated;
+
+            // Map updates to stages
+            const updates = grievance.updates || [];
+            const filedUpd = updates.find(u => (u.new_status || "").toLowerCase() === "filed") || updates[0];
+            const reviewUpd = updates.find(u => (u.new_status || "").toLowerCase() === "under review");
+            const fwdUpd = updates.find(u => (u.new_status || "").toLowerCase() === "forwarded to dept");
+            const resUpd = updates.find(u => (u.new_status || "").toLowerCase() === "resolved");
+
+            let progressBarWidth = "25%";
+            let s1Class = "completed", s2Class = "pending", s3Class = "pending", s4Class = "pending";
+
+            if (st === "resolved") {
+                progressBarWidth = "100%";
+                s1Class = "completed"; s2Class = "completed"; s3Class = "completed"; s4Class = "completed";
+            } else if (st === "forwarded to dept") {
+                progressBarWidth = "75%";
+                s1Class = "completed"; s2Class = "completed"; s3Class = "current"; s4Class = "pending";
+            } else if (st === "under review") {
+                progressBarWidth = "50%";
+                s1Class = "completed"; s2Class = "current"; s3Class = "pending"; s4Class = "pending";
+            } else {
+                progressBarWidth = "25%";
+                s1Class = "current"; s2Class = "pending"; s3Class = "pending"; s4Class = "pending";
+            }
+
+            const formatDate = (isoStr) => {
+                if (!isoStr) return "";
+                try {
+                    return new Date(isoStr).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+                } catch(e) {
+                    return isoStr;
+                }
+            };
+
+            const filedDateStr = formatDate(filedUpd?.created_at || grievance.created_at) || "Filed";
+            const reviewDateStr = reviewUpd ? formatDate(reviewUpd.created_at) : (isEscalated ? '<span style="color: #dc2626; font-weight: bold;">[Escalated Priority]</span>' : 'Pending Review');
+            const fwdDateStr = fwdUpd ? formatDate(fwdUpd.created_at) : (s3Class === "current" ? "Field Inspection" : "Next Stage");
+            const resDateStr = resUpd ? formatDate(resUpd.created_at) : (st === "resolved" ? "Completed" : "Target 30 Days");
+
             timelineContainer.innerHTML = `
                 <div class="timeline-4stage">
-                    <div class="timeline-progress-bar" style="width: 33.33%;"></div>
+                    <div class="timeline-progress-bar" style="width: ${progressBarWidth};"></div>
                     
                     <!-- Stage 1: Filed -->
-                    <div class="stage-item completed">
+                    <div class="stage-item ${s1Class}">
                         <div class="stage-node">✓</div>
                         <h4 class="stage-title" data-i18n="stage_filed">Filed</h4>
-                        <p class="stage-desc">${grievance.filedDate || "14 Feb 2026"}</p>
+                        <p class="stage-desc">${filedDateStr}</p>
                     </div>
 
                     <!-- Stage 2: Under Review -->
-                    <div class="stage-item current">
-                        <div class="stage-node">2</div>
+                    <div class="stage-item ${s2Class}">
+                        <div class="stage-node">${s2Class === "completed" ? "✓" : "2"}</div>
                         <h4 class="stage-title" data-i18n="stage_review">Under Review</h4>
-                        <p class="stage-desc">${isEscalated ? '<span style="color: #dc2626; font-weight: bold;">[Escalated Priority]</span>' : 'Pending 12 Days'}</p>
+                        <p class="stage-desc">${reviewDateStr}</p>
                     </div>
 
                     <!-- Stage 3: Forwarded to Dept -->
-                    <div class="stage-item pending">
-                        <div class="stage-node">3</div>
+                    <div class="stage-item ${s3Class}">
+                        <div class="stage-node">${s3Class === "completed" ? "✓" : "3"}</div>
                         <h4 class="stage-title" data-i18n="stage_forwarded">Forwarded to Dept</h4>
-                        <p class="stage-desc">Next Stage</p>
+                        <p class="stage-desc">${fwdDateStr}</p>
                     </div>
 
                     <!-- Stage 4: Resolved -->
-                    <div class="stage-item pending">
-                        <div class="stage-node">4</div>
+                    <div class="stage-item ${s4Class}">
+                        <div class="stage-node">${s4Class === "completed" ? "✓" : "4"}</div>
                         <h4 class="stage-title" data-i18n="stage_resolved">Resolved</h4>
-                        <p class="stage-desc">Expected in 30 days</p>
+                        <p class="stage-desc">${resDateStr}</p>
                     </div>
                 </div>
             `;
+        }
+
+        async function fetchAndRenderGrievance(queryId) {
+            if (!queryId) return;
+            const cleanId = queryId.trim().toUpperCase();
+
+            // Loading state
+            const submitBtn = trackForm ? trackForm.querySelector("button[type='submit']") : null;
+            const originalBtnText = submitBtn ? submitBtn.innerHTML : "";
+            if (submitBtn) {
+                submitBtn.disabled = true;
+                submitBtn.innerHTML = `<span>🔍 Querying IBM Db2...</span>`;
+            }
+
+            try {
+                const response = await apiRequest(`/grievances/${encodeURIComponent(cleanId)}`);
+
+                if (response.ok) {
+                    const resJson = await response.json();
+                    if (resJson.data) {
+                        renderGrievance(resJson.data);
+                        showToast("Record Retrieved from IBM Db2", `Status loaded for ${resJson.data.tracking_id}`, "success", 2500);
+                        return;
+                    }
+                }
+
+                // If not found in API, check local fallback or show error
+                if (response.status === 404) {
+                    const localFallback = findGrievance(cleanId);
+                    if (localFallback) {
+                        renderGrievance(localFallback);
+                        showToast("Cached Record Loaded", `Loaded session data for ${cleanId}`, "info", 2500);
+                        return;
+                    }
+                }
+
+                // Not found error
+                if (searchSection) searchSection.style.display = "none";
+                if (statusResult) statusResult.style.display = "none";
+                if (statusError) {
+                    statusError.style.display = "block";
+                    const errText = statusError.querySelector(".card p");
+                    if (errText) {
+                        errText.textContent = `We could not find an active grievance matching "${cleanId}" in IBM Db2. Please check the registration number.`;
+                    }
+                }
+                showToast("No Record Found", `No grievance matching "${cleanId}" in IBM Db2`, "error", 3500);
+            } catch (err) {
+                console.error("Error fetching grievance from Db2:", err);
+                const localFallback = findGrievance(cleanId);
+                if (localFallback) {
+                    renderGrievance(localFallback);
+                    showToast("Offline Cache Loaded", `Backend unreachable; loaded cached ${cleanId}`, "warning", 3000);
+                    return;
+                }
+                if (searchSection) searchSection.style.display = "none";
+                if (statusResult) statusResult.style.display = "none";
+                if (statusError) statusError.style.display = "block";
+                showToast("Connection Error", "Could not reach IBM Db2 backend API.", "error", 4000);
+            } finally {
+                if (submitBtn) {
+                    submitBtn.disabled = false;
+                    submitBtn.innerHTML = originalBtnText || "Track Status &rarr;";
+                }
+            }
         }
 
         if (trackForm) {
             trackForm.addEventListener("submit", (e) => {
                 e.preventDefault();
                 const query = regInput ? regInput.value.trim() : "";
-                if (!query) return;
-
-                const grievance = findGrievance(query);
-                if (grievance) {
-                    renderGrievance(grievance);
-                    showToast("Record Found", `Status loaded for ${grievance.id}`, "success", 2500);
-                } else {
-                    if (searchSection) searchSection.style.display = "none";
-                    if (statusError) statusError.style.display = "block";
-                    showToast("No Record Found", `No active grievance matching "${query}"`, "error", 3000);
+                if (query) {
+                    fetchAndRenderGrievance(query);
                 }
             });
         }
@@ -1311,10 +1654,7 @@
         const idFromUrl = urlParams.get("id") || urlParams.get("reg");
         if (idFromUrl) {
             if (regInput) regInput.value = idFromUrl;
-            const grievance = findGrievance(idFromUrl);
-            if (grievance) {
-                renderGrievance(grievance);
-            }
+            fetchAndRenderGrievance(idFromUrl);
         }
 
         const tryAgainBtn = document.getElementById("try-again-btn");
@@ -1356,14 +1696,39 @@
         }
 
         if (btnConfirmEscalate && escalateModal) {
-            btnConfirmEscalate.addEventListener("click", () => {
+            btnConfirmEscalate.addEventListener("click", async () => {
                 escalateModal.classList.remove("active");
-                if (activeGrievance) {
+                if (!activeGrievance) return;
+
+                const trackingId = activeGrievance.tracking_id || activeGrievance.id;
+                showToast("Escalating...", `Sending escalation request to IBM Db2 for ${trackingId}...`, "info", 2000);
+
+                try {
+                    const patchRes = await apiRequest(`/grievances/${encodeURIComponent(trackingId)}/status`, {
+                        method: "PATCH",
+                        body: JSON.stringify({
+                            status: "Under Review",
+                            priority: "Critical",
+                            notes: "Grievance escalated by citizen to Joint Secretary / Senior Appellate Officer under Citizen Charter provisions.",
+                            updated_by: "Citizen Escalation"
+                        })
+                    });
+
+                    if (patchRes.ok) {
+                        const patchData = await patchRes.json();
+                        renderGrievance(patchData.data);
+                        showToast("🚨 Grievance Escalated in IBM Db2!", "Escalated to Priority Review (Docket assigned)", "warning", 5000);
+                    } else {
+                        throw new Error(`HTTP ${patchRes.status}`);
+                    }
+                } catch (patchErr) {
+                    console.error("Escalation error:", patchErr);
+                    // Fallback local update
                     activeGrievance.escalated = true;
-                    activeGrievance.escalationId = "ESC-2026-" + Math.floor(1000 + Math.random() * 9000);
+                    activeGrievance.priority = "Critical";
                     saveGrievance(activeGrievance);
                     renderGrievance(activeGrievance);
-                    showToast("🚨 Grievance Escalated", `Escalated to Priority Review (Docket #${activeGrievance.escalationId})`, "warning", 5000);
+                    showToast("🚨 Grievance Escalated", "Marked as high priority review", "warning", 4000);
                 }
             });
         }
@@ -1465,10 +1830,64 @@
             msgContainer.scrollTop = msgContainer.scrollHeight;
         }
 
-        function processBotResponse(query) {
+        async function processBotResponse(query) {
             const q = query.toLowerCase();
             const lang = localStorage.getItem(STORAGE_KEY_LANG) || "en";
             const isHi = lang === "hi";
+
+            // 1. Show dynamic tool-calling typing indicator
+            const indicator = document.createElement("div");
+            indicator.className = "sahayak-msg sahayak-msg--bot sahayak-indicator";
+            indicator.innerHTML = `
+                <span style="display:inline-flex;align-items:center;gap:0.4rem;color:#0043ce;font-size:0.8125rem;">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="animation: spin 1.2s linear infinite;"><line x1="12" y1="2" x2="12" y2="6"></line><line x1="12" y1="18" x2="12" y2="22"></line><line x1="4.93" y1="4.93" x2="7.76" y2="7.76"></line><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"></line><line x1="2" y1="12" x2="6" y2="12"></line><line x1="18" y1="12" x2="22" y2="12"></line><line x1="4.93" y1="19.07" x2="7.76" y2="16.24"></line><line x1="16.24" y1="7.76" x2="19.07" y2="4.93"></line></svg>
+                    <em>Sahayak is consulting IBM Db2...</em>
+                </span>
+            `;
+            msgContainer.appendChild(indicator);
+            msgContainer.scrollTop = msgContainer.scrollHeight;
+
+            // 2. Call backend Agentic Tool-Dispatcher endpoint
+            try {
+                const response = await fetch("/api/sahayak/chat", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ message: query, language: lang })
+                });
+
+                if (indicator) indicator.remove();
+
+                if (response.ok) {
+                    const data = await response.json();
+                    appendMessage(data.reply, "bot");
+
+                    // 1-Click Interactive Tracking Card if docket lookup tool was invoked
+                    if (data.tool_used === "tool_track_docket" && data.data_payload && data.data_payload.found) {
+                        const p = data.data_payload;
+                        const card = document.createElement("div");
+                        card.className = "sahayak-tracking-card";
+                        card.style.cssText = "background: #f0f7ff; border: 1px solid #bae6fd; border-radius: 6px; padding: 0.75rem; margin-top: 0.5rem; font-size: 0.8125rem;";
+                        card.innerHTML = `
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.35rem;">
+                                <strong style="color: #0043ce; font-family: monospace; font-size: 0.9375rem;">${p.tracking_id}</strong>
+                                <span style="font-size: 0.7rem; font-weight: 700; background: ${p.status === 'Resolved' ? '#dcfce7' : '#fef3c7'}; color: ${p.status === 'Resolved' ? '#166534' : '#92400e'}; padding: 0.15rem 0.4rem; border-radius: 4px;">${p.status}</span>
+                            </div>
+                            <div style="color: #475569; margin-bottom: 0.5rem; font-size: 0.75rem;">${p.subject}</div>
+                            <a href="track-status.html?id=${encodeURIComponent(p.tracking_id)}" class="btn btn--primary" style="display: block; text-align: center; font-size: 0.75rem; padding: 0.35rem 0.6rem; text-decoration: none; border-radius: 4px; color: #fff; background: #0043ce;">
+                                View Live Timeline & Actions &rarr;
+                            </a>
+                        `;
+                        msgContainer.appendChild(card);
+                        msgContainer.scrollTop = msgContainer.scrollHeight;
+                    }
+                    return;
+                }
+            } catch (err) {
+                console.warn("Sahayak API fetch offline, executing fallback client knowledge:", err);
+                if (indicator) indicator.remove();
+            }
+
+            // 3. Fallback client-side rule matches if backend is unreachable
 
             const matchGrv = query.match(/GRV-\d{4}-\d{4}/i);
             if (matchGrv) {
@@ -1557,34 +1976,78 @@
         // Voice button inside Assistant
         if (micBtn) {
             const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+            let sahayakRec = null;
+
             micBtn.addEventListener("click", () => {
+                if (micBtn.classList.contains("listening")) {
+                    if (sahayakRec) {
+                        sahayakRec.stop();
+                        sahayakRec = null;
+                    }
+                    micBtn.classList.remove("listening");
+                    return;
+                }
+
                 if (SpeechRec) {
                     try {
                         const rec = new SpeechRec();
                         rec.continuous = false;
-                        rec.interimResults = false;
+                        rec.interimResults = true;
                         const lang = localStorage.getItem(STORAGE_KEY_LANG) || "en";
                         rec.lang = voiceLocaleMap[lang] || "en-IN";
 
-                        micBtn.classList.add("listening");
-                        showToast("🎙️ Sahayak Listening", `Speak your question in ${languageNames[lang] || 'your language'}...`, "info", 2000);
+                        let initialText = "";
+
+                        rec.onstart = () => {
+                            if (inputEl) {
+                                initialText = inputEl.value.trim();
+                            }
+                            micBtn.classList.add("listening");
+                            showToast("🎙️ Sahayak Listening", `Speak your question in ${languageNames[lang] || 'your language'}...`, "info", 2000);
+                        };
 
                         rec.onresult = (e) => {
-                            const spoken = e.results[0][0].transcript;
-                            inputEl.value = spoken;
-                            micBtn.classList.remove("listening");
-                            handleSend();
+                            let interimTranscript = "";
+                            let finalTranscript = "";
+                            for (let i = e.resultIndex; i < e.results.length; ++i) {
+                                if (e.results[i].isFinal) {
+                                    finalTranscript += e.results[i][0].transcript;
+                                } else {
+                                    interimTranscript += e.results[i][0].transcript;
+                                }
+                            }
+
+                            if (finalTranscript) {
+                                initialText += (initialText ? " " : "") + finalTranscript;
+                            }
+
+                            if (inputEl) {
+                                inputEl.value = initialText + (interimTranscript ? (initialText ? " " : "") + interimTranscript : "");
+                            }
                         };
-                        rec.onerror = () => {
+
+                        rec.onerror = (e) => {
+                            console.warn("Sahayak speech error:", e.error);
                             micBtn.classList.remove("listening");
-                            showToast("Voice Assistant", "Could not capture voice; please type your question.", "warning", 2000);
+                            sahayakRec = null;
+                            if (e.error !== "no-speech") {
+                                showToast("Voice Assistant", "Could not capture voice; please type your question.", "warning", 2000);
+                            }
                         };
+
                         rec.onend = () => {
                             micBtn.classList.remove("listening");
+                            sahayakRec = null;
+                            if (inputEl && inputEl.value.trim()) {
+                                handleSend();
+                            }
                         };
+
+                        sahayakRec = rec;
                         rec.start();
                     } catch (e) {
                         micBtn.classList.remove("listening");
+                        sahayakRec = null;
                     }
                 } else {
                     showToast("Voice Unavailable", "Browser does not support direct voice input.", "info");

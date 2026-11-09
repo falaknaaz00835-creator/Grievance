@@ -1,5 +1,5 @@
 /* ==========================================================================
-   CPGRAMS Redesigned - "Build What Moves India" Design System
+   CPGRAMS Redesigned - IBM Db2Hack 2026 Design System
    Colors: Navy (#1a2744), Maroon (#8b1a2b), Orange (#e67e22)
    ========================================================================== */
 
@@ -3622,4 +3622,9 @@ html[dir="rtl"] .main-header .container,
 html[dir="rtl"] .breadcrumb,
 html[dir="rtl"] .form-actions {
     flex-direction: row-reverse;
+}
+
+@keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
 }

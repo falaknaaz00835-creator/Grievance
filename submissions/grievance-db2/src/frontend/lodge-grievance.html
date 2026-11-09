@@ -77,6 +77,9 @@
                     <li><a href="index.html" data-i18n="nav_home">Home</a></li>
                     <li><a href="lodge-grievance.html" class="active" aria-current="page" data-i18n="nav_lodge">Lodge Grievance</a></li>
                     <li><a href="track-status.html" data-i18n="nav_track">Track Status</a></li>
+                    <li><a href="officer.html">Officer Portal</a></li>
+                    <li><a href="dashboard.html">Analytics Dashboard</a></li>
+                    <li><a href="ask-data.html">Ask the Data (AI)</a></li>
                     <li><a href="help-faq.html" data-i18n="nav_help">Help & FAQs</a></li>
                     <li><a href="contact.html" data-i18n="nav_contact">Contact</a></li>
                 </ul>
@@ -476,6 +479,39 @@
                             </button>
                         </div>
                     </div>
+
+                    <!-- AI Triage Classification Badge Box -->
+                    <div id="conf-ai-box" style="background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; max-width: 600px; margin: 1.5rem auto; padding: 1.25rem; text-align: left;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
+                            <span style="font-size: 0.75rem; font-weight: 700; color: #166534; text-transform: uppercase; letter-spacing: 0.05em; display: flex; align-items: center; gap: 0.35rem;">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
+                                LangChain Automated AI Triage (IBM Db2 Stored)
+                            </span>
+                            <span id="conf-ai-method" style="font-size: 0.7rem; background: #dcfce7; color: #15803d; padding: 0.15rem 0.5rem; border-radius: 4px; font-weight: 600;">LangChain Chain</span>
+                        </div>
+                        <div style="display: flex; gap: 0.75rem; margin-bottom: 0.5rem; flex-wrap: wrap;">
+                            <span style="font-size: 0.8125rem; color: #374151;">AI Category: <strong id="conf-ai-category" style="color: #0f172a; text-transform: capitalize;">General</strong></span>
+                            <span style="color: #9ca3af;">&bull;</span>
+                            <span style="font-size: 0.8125rem; color: #374151;">Assigned Priority: <strong id="conf-ai-priority" style="color: #b91c1c;">Medium</strong></span>
+                        </div>
+                        <p id="conf-ai-summary" style="margin: 0; font-size: 0.875rem; color: #1f2937; line-height: 1.4; background: #ffffff; padding: 0.75rem; border-radius: 6px; border: 1px solid #dcfce7;">
+                            AI triage analysis...
+                        </p>
+                    </div>
+
+                    <!-- Hotspot / Duplicate Detection Warning Box -->
+                    <div id="conf-hotspot-box" style="display: none; background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px; max-width: 600px; margin: 1.5rem auto; padding: 1.25rem; text-align: left;">
+                        <div style="display: flex; align-items: flex-start; gap: 0.75rem;">
+                            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#d97706" stroke-width="2" style="flex-shrink: 0; margin-top: 2px;"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
+                            <div>
+                                <h4 id="conf-hotspot-title" style="margin: 0 0 0.25rem; color: #92400e; font-size: 0.9375rem;">Municipal Ward Hotspot Alert</h4>
+                                <p id="conf-hotspot-msg" style="margin: 0; font-size: 0.8125rem; color: #b45309; line-height: 1.4;">
+                                    Active complaints detected in this ward.
+                                </p>
+                                <div id="conf-duplicates-list" style="margin-top: 0.5rem; font-size: 0.75rem; color: #78350f;"></div>
+                            </div>
+                        </div>
+                    </div>
                     
                     <div class="next-steps text-left" style="background: var(--color-bg); padding: 1.5rem; border-radius: var(--radius-md); max-width: 600px; margin: 1.5rem auto; text-align: left;">
                         <h4 style="margin-top: 0; color: var(--color-navy);">What happens next?</h4>
@@ -531,7 +567,7 @@
             </div>
             <div class="footer__bottom">
                 <div data-i18n="footer_copyright">&copy; 2026 Government of India. All rights reserved.</div>
-                <div style="opacity: 0.8;">Designed for the "Build What Moves India" Hackathon.</div>
+                <div style="opacity: 0.8;">Designed for IBM Db2Hack 2026 - AI & Modern Data Apps Track.</div>
             </div>
         </div>
     </footer>
@@ -637,15 +673,8 @@
                 document.getElementById('review-mobile').textContent = document.getElementById('mobile').value || 'Not provided';
             }
 
-            // Submit handler transitions to confirmation
-            document.getElementById('btn-submit').addEventListener('click', () => {
-                const consent = document.getElementById('consent');
-                if (consent && consent.checked) {
-                    setTimeout(() => {
-                        updateView('confirmation');
-                    }, 200);
-                }
-            });
+            // Expose updateView globally so the API submission handler in main.js can transition views
+            window.updateGrievanceView = updateView;
         });
     </script>
 </body>

@@ -1,0 +1,3 @@
+# Top-level Docker Compose redirecting to the official submission package
+include:
+  - submissions/grievance-db2/docker-compose.yml
