@@ -479,7 +479,7 @@
                 const statusVal = statusFilter.value;
                 const priVal = priorityFilter.value;
 
-                let url = `/api/officer/dockets?limit=50`;
+                let url = `/api/grievances?limit=50`;
                 if (deptVal !== "all") url += `&department=${encodeURIComponent(deptVal)}`;
                 if (statusVal !== "all") url += `&status=${encodeURIComponent(statusVal)}`;
                 if (priVal !== "all") url += `&priority=${encodeURIComponent(priVal)}`;
@@ -487,9 +487,9 @@
                 try {
                     const response = await fetch(url);
                     if (!response.ok) throw new Error("HTTP " + response.status);
-                    activeDockets = await response.json();
-                    renderTable(activeDockets);
-                } catch (err) {
+                    const resData = await response.json();
+                    activeDockets = Array.isArray(resData) ? resData : (resData.items || resData.grievances || []);
+                    renderTable(activeDockets);                } catch (err) {
                     console.error("Error loading officer dockets:", err);
                     tableBody.innerHTML = `<tr><td colspan="7" style="text-align: center; color: #dc2626; padding: 2.5rem;">⚠️ Failed to load dockets from IBM Db2. Please verify API status.</td></tr>`;
                 }
